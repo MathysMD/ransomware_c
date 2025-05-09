@@ -1,4 +1,4 @@
----
+
 
 ## Le Fonctionnement : 
 
@@ -94,4 +94,3 @@ gcc client_decrypt.c   -o client_decrypt -lssl -lcrypto
    * Tape un message d’excuse (au moins 20 caractères).
    * Les fichiers restaurés se retrouvent dans `Projet/`.
 
----
